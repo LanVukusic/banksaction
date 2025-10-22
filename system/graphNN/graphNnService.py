@@ -3,12 +3,17 @@ import json
 from nats.aio.client import Client as NATS
 import networkx as nx
 from utils import create_customer_merchant_multigraph
+from model import AdvancedGraphCNN
 
 # from model import AdvancedGraphCNN
 import psycopg2
 import pandas as pd
+import torch
 
 G: nx.MultiGraph = None
+model = AdvancedGraphCNN(2, 1, 128, 4)
+model.load_state_dict(torch.load("../../models/model.pth"))
+model.eval()
 
 
 # model = AdvancedGraphCNN(2, 1, 128, 4)
@@ -83,14 +88,8 @@ def append_to_transaction_graph(transaction):
     print(f"Appended transaction {df['TRANSACTION_ID'].iloc[0]} to the graph.")
 
 
-# DONT IMPLEMENT YET
-# def get_transactions_embedding(inputs: Array[int]):
-#     # get transaction ids
-#     # createa random_walk_subgraph from the inputs
-#     # get data from subgraph
-#     # use the model, embed the data
-#     # return embeddings
-#     ...
+def get_transactions_embedding(inputs):
+    return model.forward_embedding(inputs)
 
 
 async def run():
