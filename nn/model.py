@@ -138,11 +138,14 @@ class AdvancedGraphCNN(torch.nn.Module):
             self.bns.append(bn)
         
         self.jk = JumpingKnowledge(mode='max')
-        
-        self.classifier = torch.nn.Sequential(
+
+        self.embdeder = torch.nn.Sequential(
             torch.nn.Linear(hidden_dim, hidden_dim // 2),
             torch.nn.BatchNorm1d(hidden_dim // 2),
-            torch.nn.ReLU(),
+            torch.nn.ReLU()
+        )
+
+        self.classifier = torch.nn.Sequential(
             torch.nn.Dropout(0.6),
             torch.nn.Linear(hidden_dim // 2, 1)
         )
@@ -181,9 +184,48 @@ class AdvancedGraphCNN(torch.nn.Module):
         
         # Pool and classify
         x = global_mean_pool(x, batch)
+        x = self.embdeder(x)
         x = self.classifier(x)
         
         return x.squeeze(-1)
+
+    def forward_embedding(self, data):
+        x, edge_index, edge_attr, batch = data.x, data.edge_index, data.edge_attr, data.batch
+        
+        # Initial embedding
+        x = self.node_embed(x)
+        
+        # Edge feature incorporation
+        if edge_attr is not None and self.edge_embed is not None:
+            edge_emb = self.edge_embed(edge_attr)
+            row, col = edge_index
+            # More sophisticated edge aggregation
+            edge_aggr = torch.zeros_like(x)
+            degree = torch.zeros(x.size(0), 1, device=x.device)
+            degree = degree.scatter_add_(0, row.unsqueeze(1), torch.ones_like(row.unsqueeze(1).float()))
+            degree = torch.clamp(degree, min=1)  # Avoid division by zero
+            
+            edge_aggr = edge_aggr.index_add_(0, row, edge_emb)
+            x = x + edge_aggr / degree
+        
+        # Residual GCN layers with batch norm
+        xs = []
+        for conv, bn in zip(self.convs, self.bns):
+            residual = x
+            x = conv(x, edge_index)
+            x = bn(x)
+            x = F.relu(x)
+            x = x + residual  # Residual connection
+            xs.append(x)
+        
+        # Combine layer representations
+        x = self.jk(xs)
+        
+        # Pool and get embedding
+        x = global_mean_pool(x, batch)
+        x = self.embdeder(x)
+        
+        return x
 
 # Example usage and testing
 if __name__ == "__main__":
