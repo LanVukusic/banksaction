@@ -2,7 +2,7 @@ import asyncio
 import json
 from nats.aio.client import Client as NATS
 import networkx as nx
-from utils import create_customer_merchant_multigraph
+from utils import create_customer_merchant_multigraph, random_walk_subgraph
 from model import AdvancedGraphCNN
 
 # from model import AdvancedGraphCNN
@@ -81,7 +81,7 @@ def append_to_transaction_graph(transaction):
 
 
 def get_transactions_embedding(inputs):
-    return model.forward_embedding(inputs)
+    return model.forward_embedding(random_walk_subgraph(G, inputs))
 
 
 async def run():
