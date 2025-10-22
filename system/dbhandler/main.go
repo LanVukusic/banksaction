@@ -1,14 +1,14 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
-
-	"database/sql"
 
 	_ "github.com/lib/pq"
 	"github.com/nats-io/nats.go"
@@ -32,28 +32,12 @@ type Transaction struct {
 	TerminalY             float64   `json:"TERMINAL_Y"`
 }
 
-func main() {
-	var nc *nats.Conn
+func initDb() (*sql.DB, error) {
+	var db *sql.DB
 	var err error
 
-	// Retry connecting to NATS
-	for i := 0; i < 5; i++ {
-		nc, err = nats.Connect("nats://nats:4222")
-		if err == nil {
-			break
-		}
-		log.Println("Waiting for NATS...")
-		time.Sleep(2 * time.Second)
-	}
-	if err != nil {
-		log.Fatal("Could not connect to NATS:", err)
-	}
-	defer nc.Close()
-
-	var db *sql.DB
-
-	// Retry connecting to PostgreSQL
-	connStr := "host=postgres user=user password=password dbname=transactions sslmode=disable"
+	// Connect to the default postgres database to check if our database exists
+	connStr := "host=localhost user=user password=password dbname=postgres sslmode=disable"
 	for i := 0; i < 5; i++ {
 		db, err = sql.Open("postgres", connStr)
 		if err == nil {
@@ -66,7 +50,89 @@ func main() {
 		time.Sleep(2 * time.Second)
 	}
 	if err != nil {
-		log.Fatal("Could not connect to PostgreSQL:", err)
+		return nil, err
+	}
+
+	// Check if the 'transactions' database exists
+	rows, err := db.Query("SELECT 1 FROM pg_database WHERE datname = 'transactions'")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	if !rows.Next() {
+		// Database does not exist, create it
+		_, err = db.Exec("CREATE DATABASE transactions")
+		if err != nil {
+			return nil, err
+		}
+		log.Println("Database 'transactions' created.")
+	} else {
+		log.Println("Database 'transactions' already exists.")
+	}
+	db.Close()
+
+	// Connect to the 'transactions' database
+	connStr = "host=localhost user=user password=password dbname=transactions sslmode=disable"
+	for i := 0; i < 5; i++ {
+		db, err = sql.Open("postgres", connStr)
+		if err == nil {
+			err = db.Ping()
+			if err == nil {
+				break
+			}
+		}
+		log.Println("Waiting for 'transactions' database...")
+		time.Sleep(2 * time.Second)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// Read and execute the init.sql file
+	c, err := os.ReadFile("init.sql")
+	if err != nil {
+		return nil, err
+	}
+	sql := string(c)
+	_, err = db.Exec(sql)
+	if err != nil {
+		// If the table already exists, we can ignore the error
+		if !strings.Contains(err.Error(), "already exists") {
+			return nil, err
+		}
+	} else {
+		log.Println("Table 'transactions' created.")
+	}
+
+	return db, nil
+}
+
+func main() {
+	log.Printf("starting...")
+	var nc *nats.Conn
+	var err error
+
+	// Retry connecting to NATS
+	for i := 0; i < 5; i++ {
+		nc, err = nats.Connect("nats://localhost:4222")
+		if err == nil {
+			break
+		}
+		log.Println("Waiting for NATS...")
+		time.Sleep(2 * time.Second)
+	}
+	if err != nil {
+		log.Fatal("Could not connect to NATS:", err)
+	}
+	log.Println("Connected to postgres")
+	defer nc.Close()
+
+	db, err := initDb()
+	if err != nil {
+		log.Fatal("Database initialization failed:", err)
+	} else {
+		log.Println("Database initialized")
 	}
 	defer db.Close()
 
