@@ -17,11 +17,11 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data:Z
 
-  dbhandler:
-    build: ./dbhandler
-    depends_on:
-      - nats
-      - postgres
+  # dbhandler:
+  #   build: ./dbhandler
+  #   depends_on:
+  #     - nats
+  #     - postgres
 
 volumes:
   postgres_data:
