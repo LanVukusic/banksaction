@@ -16,7 +16,6 @@ model.load_state_dict(torch.load("../../models/model.pth"))
 model.eval()
 
 
-# model = AdvancedGraphCNN(2, 1, 128, 4)
 def init_transaction_graph(num_latest: int = 3000):
     global G
     conn = None
@@ -48,13 +47,6 @@ def init_transaction_graph(num_latest: int = 3000):
     else:
         print("No transactions found to initialize the graph.")
         G = nx.MultiGraph()
-
-    # except Exception as error:
-    #     print(f"Error while connecting to PostgreSQL: {error}")
-    #     G = nx.MultiGraph()
-    # finally:
-    #     if conn:
-    #         conn.close()
 
 
 # update transaction type!
