@@ -14,3 +14,12 @@ CREATE TABLE transactions (
     TERMINAL_X FLOAT,
     TERMINAL_Y FLOAT
 );
+
+CREATE EXTENSION IF NOT EXISTS vector;
+
+CREATE TABLE embeddings (
+    id SERIAL PRIMARY KEY,
+    embedding VECTOR(64),
+    name TEXT,
+    transaction_references INT[]
+);

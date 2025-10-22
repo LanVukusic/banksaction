@@ -3,6 +3,111 @@ from torch_geometric.data import Data, Dataset
 import networkx as nx
 import pandas as pd
 import numpy as np
+import warnings
+
+
+def networkx_to_pyg(
+    nx_graph: nx.MultiGraph,
+    node_feature_config: dict,
+    edge_feature_config: dict,
+    node_dims: dict,
+    edge_dims: dict,
+    node_total_dim: int,
+    edge_total_dim: int,
+) -> Data:
+    """
+    Converts a NetworkX MultiGraph to a PyG Data object using
+    the user-defined feature processing configurations.
+    """
+    if nx_graph.number_of_nodes() == 0:
+        # Handle empty graph case using pre-calculated dimensions
+        return Data(
+            x=torch.empty((0, node_total_dim), dtype=torch.float),
+            edge_index=torch.empty((2, 0), dtype=torch.long),
+            edge_attr=torch.empty((0, edge_total_dim), dtype=torch.float),
+            edge_label=torch.empty(0, dtype=torch.float),
+            y=torch.tensor([0.0], dtype=torch.float),
+        )
+
+    # 1. Create node mapping and features (x)
+    node_mapping = {node: i for i, node in enumerate(nx_graph.nodes())}
+    node_features = []
+    for node in nx_graph.nodes():
+        node_data = nx_graph.nodes[node]
+        feature_parts = []
+
+        # Apply each processing function from the config
+        for name, func in node_feature_config.items():
+            # try:
+            result = func(node_data)
+            # Safety check for consistent dimension
+            if len(result) != node_dims[name]:
+                raise ValueError(f"Inconsistent output dim for '{name}'")
+            feature_parts.extend(result)
+            # except Exception as e:
+            #     # Robustness: Fill with zeros if func fails
+            #     warnings.warn(
+            #         f"Warning: Node func '{name}' failed (Node: {node}). Using zeros. Error: {e}"
+            #     )
+            #     feature_parts.extend([0.0] * node_dims[name])
+
+        node_features.append(feature_parts)
+
+    x = torch.tensor(node_features, dtype=torch.float)
+
+    # 2. Create edge index, features (edge_attr), and labels (edge_label)
+    edge_indices = []
+    edge_features = []
+    edge_labels = []
+
+    for u, v, data in nx_graph.edges(data=True):
+        if u not in node_mapping or v not in node_mapping:
+            continue
+
+        u_idx, v_idx = node_mapping[u], node_mapping[v]
+        edge_indices.append([u_idx, v_idx])
+
+        # Apply each processing function from the config
+        feature_parts = []
+        for name, func in edge_feature_config.items():
+            try:
+                result = func(data)
+                if len(result) != edge_dims[name]:
+                    raise ValueError(f"Inconsistent output dim for '{name}'")
+                feature_parts.extend(result)
+            except Exception as e:
+                warnings.warn(
+                    f"Warning: Edge func '{name}' failed. Using zeros. Error: {e}"
+                )
+                feature_parts.extend([0.0] * edge_dims[name])
+
+        edge_features.append(feature_parts)
+
+        # Get fraud label (this is separate from features)
+        edge_labels.append(float(data.get("is_fraud", 0.0)))
+
+    # Handle case with nodes but no edges
+    if not edge_indices:
+        edge_index = torch.empty((2, 0), dtype=torch.long)
+        edge_attr = torch.empty((0, edge_total_dim), dtype=torch.float)
+        edge_label = torch.empty(0, dtype=torch.float)
+    else:
+        edge_index = torch.tensor(edge_indices, dtype=torch.long).t().contiguous()
+        edge_attr = torch.tensor(edge_features, dtype=torch.float)
+        edge_label = torch.tensor(edge_labels, dtype=torch.float)
+
+    # 3. Create graph-level label (y)
+    graph_has_fraud = (edge_label.sum() > 0).float()
+
+    pyg_data = Data(
+        x=x,
+        edge_index=edge_index,
+        edge_attr=edge_attr,
+        edge_label=edge_label,
+        y=graph_has_fraud.unsqueeze(0),
+    )
+
+    return pyg_data
 
 
 def create_customer_merchant_multigraph(df: pd.DataFrame) -> nx.MultiGraph:
