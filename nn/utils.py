@@ -3,7 +3,6 @@ from torch_geometric.data import Data, Dataset
 import networkx as nx
 import pandas as pd
 import numpy as np
-import warnings
 
 
 def create_customer_merchant_multigraph(df: pd.DataFrame) -> nx.MultiGraph:
@@ -26,11 +25,8 @@ def create_customer_merchant_multigraph(df: pd.DataFrame) -> nx.MultiGraph:
 
     # --- 1. Prepare data for graph creation ---
 
-    # Create a unique customer ID
-    df_copy["customer_id"] = df_copy["first"] + "_" + df_copy["last"]
-
-    # Add 'weight' attribute for GNN models, from 'amt'
-    df_copy["weight"] = df_copy["amt"].astype(float)
+    # Add 'weight' attribute for GNN models, from 'TX_AMOUNT'
+    df_copy["weight"] = df_copy["TX_AMOUNT"].astype(float)
 
     # Ensure 'original_index' is an attribute for potential debugging
     # This is no longer needed for fraud lookup, but good practice.
@@ -43,8 +39,8 @@ def create_customer_merchant_multigraph(df: pd.DataFrame) -> nx.MultiGraph:
     # and copies ALL columns from df_copy as edge attributes.
     G = nx.from_pandas_edgelist(
         df_copy,
-        source="customer_id",
-        target="merchant",
+        source="CUSTOMER_ID",
+        target="MERCHANT_ID",
         edge_attr=True,  # Use all other columns as edge attributes
         create_using=nx.MultiGraph,
     )
@@ -52,20 +48,15 @@ def create_customer_merchant_multigraph(df: pd.DataFrame) -> nx.MultiGraph:
     # --- 3. Add node-specific attributes ---
 
     # Set attributes for customer nodes
-    customer_nodes = df_copy[["customer_id", "first", "last"]].drop_duplicates()
+    customer_nodes = df_copy["CUSTOMER_ID"].unique()
     customer_attrs = {
-        row.customer_id: {
-            "type_onehot": [1, 0],
-            "type": "customer",
-            "first_name": row.first,
-            "last_name": row.last,
-        }
-        for row in customer_nodes.itertuples()
+        customer_id: {"type_onehot": [1, 0], "type": "customer"}
+        for customer_id in customer_nodes
     }
     nx.set_node_attributes(G, customer_attrs)
 
     # Set attributes for merchant nodes
-    merchant_nodes = df_copy["merchant"].unique()
+    merchant_nodes = df_copy["MERCHANT_ID"].unique()
     merchant_attrs = {
         merchant_id: {"type_onehot": [0, 1], "type": "merchant"}
         for merchant_id in merchant_nodes

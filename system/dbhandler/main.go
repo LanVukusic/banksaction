@@ -73,13 +73,12 @@ func nullFloatToSQL(f *float64) sql.NullFloat64 {
 	}
 	return sql.NullFloat64{Float64: *f, Valid: true}
 }
-
 func initDb() (*sql.DB, error) {
 	var db *sql.DB
 	var err error
 
-	// Connect to the default postgres database to check if our database exists
-	connStr := "host=localhost user=user password=password dbname=postgres sslmode=disable"
+	// Connect directly to the default postgres database
+	connStr := "host=localhost user=user password=password dbname=transactions sslmode=disable"
 	for i := 0; i < 5; i++ {
 		db, err = sql.Open("postgres", connStr)
 		if err == nil {
@@ -95,43 +94,7 @@ func initDb() (*sql.DB, error) {
 		return nil, err
 	}
 
-	// Check if the 'transactions' database exists
-	rows, err := db.Query("SELECT 1 FROM pg_database WHERE datname = 'transactions'")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	if !rows.Next() {
-		// Database does not exist, create it
-		_, err = db.Exec("CREATE DATABASE transactions")
-		if err != nil {
-			return nil, err
-		}
-		log.Println("Database 'transactions' created.")
-	} else {
-		log.Println("Database 'transactions' already exists.")
-	}
-	db.Close()
-
-	// Connect to the 'transactions' database
-	connStr = "host=localhost user=user password=password dbname=transactions sslmode=disable"
-	for i := 0; i < 5; i++ {
-		db, err = sql.Open("postgres", connStr)
-		if err == nil {
-			err = db.Ping()
-			if err == nil {
-				break
-			}
-		}
-		log.Println("Waiting for 'transactions' database...")
-		time.Sleep(2 * time.Second)
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	// Read and execute the init.sql file
+	// Read and execute the init.sql file directly on the postgres database
 	c, err := os.ReadFile("init.sql")
 	if err != nil {
 		return nil, err
@@ -156,7 +119,7 @@ func main() {
 	var err error
 
 	// Retry connecting to NATS
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		nc, err = nats.Connect("nats://localhost:4222")
 		if err == nil {
 			break
