@@ -3,47 +3,53 @@ import json
 from nats.aio.client import Client as NATS
 import networkx as nx
 from utils import create_customer_merchant_multigraph
-from model import AdvancedGraphCNN
+
+# from model import AdvancedGraphCNN
 import psycopg2
 import pandas as pd
 
 G: nx.MultiGraph = None
-model = AdvancedGraphCNN(2, 1, 128, 4)
 
 
-def init_transaction_graph(num_latest: int = 4000):
+# model = AdvancedGraphCNN(2, 1, 128, 4)
+def init_transaction_graph(num_latest: int = 3000):
     global G
     conn = None
-    try:
-        # Connect to the PostgreSQL database
-        conn = psycopg2.connect(
-            host="localhost", database="transactions", user="user", password="password"
+    conn = psycopg2.connect(
+        "dbname=transactions user=user password=password host=localhost port=5432 sslmode=disable"
+    )
+
+    cursor = conn.cursor()
+
+    # Query to get the latest transactions
+    query = f"SELECT * FROM transactions ORDER BY TX_DATETIME DESC LIMIT {num_latest};"
+    cursor.execute(query)
+
+    # Get all results
+    rows = cursor.fetchall()
+
+    # Get column names
+    columns = [desc[0].upper() for desc in cursor.description]
+
+    # Create DataFrame manually
+    df = pd.DataFrame(rows, columns=columns)
+
+    # Create the graph
+    if not df.empty:
+        G = create_customer_merchant_multigraph(df)
+        print(
+            f"Transaction graph initialized with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges."
         )
+    else:
+        print("No transactions found to initialize the graph.")
+        G = nx.MultiGraph()
 
-        # Query to get the latest transactions
-        query = (
-            f"SELECT * FROM transactions ORDER BY TX_DATETIME DESC LIMIT {num_latest};"
-        )
-
-        # Load data into a pandas DataFrame
-        df = pd.read_sql_query(query, conn)
-
-        # Create the graph
-        if not df.empty:
-            G = create_customer_merchant_multigraph(df)
-            print(
-                f"Transaction graph initialized with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges."
-            )
-        else:
-            print("No transactions found to initialize the graph.")
-            G = nx.MultiGraph()
-
-    except (Exception, psycopg2.Error) as error:
-        print("Error while connecting to PostgreSQL", error)
-    finally:
-        # closing database connection.
-        if conn:
-            conn.close()
+    # except Exception as error:
+    #     print(f"Error while connecting to PostgreSQL: {error}")
+    #     G = nx.MultiGraph()
+    # finally:
+    #     if conn:
+    #         conn.close()
 
 
 # update transaction type!
@@ -97,9 +103,9 @@ async def run():
 
     # Define the message handler
     async def message_handler(msg):
-        subject = msg.subject
+        # subject = msg.subject
         data = json.loads(msg.data.decode())
-        print(f"Received a message on '{subject}': {data}")
+        # print(f"Received a message on '{subject}': {data}")
 
         # when transaction is received, add it to the graph
         append_to_transaction_graph(data)
