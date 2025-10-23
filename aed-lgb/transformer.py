@@ -287,7 +287,7 @@ if __name__ == "__main__":
         print(f"Epoch [{epoch + 1}/{AE_EPOCHS}], Average Loss: {avg_loss:.6f}")
         scheduler.step(avg_loss)
 
-    INFERENCE_BATCH_SIZE = 1024 
+    INFERENCE_BATCH_SIZE = 1024
 
     def get_latent_vectors_in_batches(model, data, batch_size, device):
         """Helper function to run inference in batches."""
@@ -297,13 +297,13 @@ if __name__ == "__main__":
             for i in tqdm(range(0, len(data), batch_size), desc="Encoding Batches"):
                 batch_data = data[i : i + batch_size]
                 batch_tensor = torch.tensor(batch_data, dtype=torch.float32).to(device)
-                
+
                 # We need to handle the forward pass differently for encode
                 # The encode method in your class needs a slight modification
                 latent_vector = model.encode(batch_tensor)
-                
+
                 all_latents.append(latent_vector.cpu().numpy())
-        
+
         return np.concatenate(all_latents, axis=0)
 
     # We need to update the .encode() method slightly in the model class
