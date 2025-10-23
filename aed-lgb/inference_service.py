@@ -11,7 +11,8 @@ import lightgbm as lgb
 import pandas as pd
 import numpy as np
 
-from ae import TransactionAutoencoderV2
+from ae import TransactionAutoencoder
+from feature import feature_engineering
 
 
 MODEL_DIR = "saved_models"
@@ -102,93 +103,6 @@ class FraudDetectionService:
             df[col] = encoder.transform(df[col])
         return df
 
-    @staticmethod
-    def _feature_engineering(df: pd.DataFrame) -> pd.DataFrame:
-        df["timestamp"] = pd.to_datetime(df["timestamp"])
-        df = df.sort_values(by=["card_masked", "timestamp"]).reset_index(drop=True)
-
-        df["hour_of_day"] = df["timestamp"].dt.hour
-        df["day_of_week"] = df["timestamp"].dt.dayofweek
-        df["is_night"] = ((df["hour_of_day"] >= 22) | (df["hour_of_day"] <= 6)).astype(
-            int
-        )
-        df["time_since_last_tx_seconds"] = (
-            df.groupby("card_masked")["timestamp"].diff().dt.total_seconds()
-        )
-
-        df["user_merchant_tx_count"] = df.groupby(
-            ["card_masked", "merchant"]
-        ).cumcount()
-        df["user_has_used_merchant_before"] = (df["user_merchant_tx_count"] > 0).astype(
-            int
-        )
-        df["user_mcc_tx_count"] = df.groupby(["card_masked", "mcc"]).cumcount()
-        df["user_has_used_mcc_before"] = (df["user_mcc_tx_count"] > 0).astype(int)
-        df_dt_indexed = df.set_index("timestamp")
-        df["user_tx_count_1h"] = (
-            df_dt_indexed.groupby("card_masked")["transaction_id"]
-            .rolling("1h")
-            .count()
-            .reset_index(0, drop=True)
-            .values
-        )
-        df["user_tx_count_6h"] = (
-            df_dt_indexed.groupby("card_masked")["transaction_id"]
-            .rolling("6h")
-            .count()
-            .reset_index(0, drop=True)
-            .values
-        )
-        df["user_tx_count_24h"] = (
-            df_dt_indexed.groupby("card_masked")["transaction_id"]
-            .rolling("24h")
-            .count()
-            .reset_index(0, drop=True)
-            .values
-        )
-        df["user_unique_merchant_count_1h"] = (
-            df_dt_indexed.groupby("card_masked")["merchant"]
-            .rolling("1h")
-            .apply(lambda x: x.nunique())
-            .reset_index(0, drop=True)
-            .values
-        )
-        df["user_unique_location_count_24h"] = (
-            df_dt_indexed.groupby("card_masked")["location"]
-            .rolling("24h")
-            .apply(lambda x: x.nunique())
-            .reset_index(0, drop=True)
-            .values
-        )
-        expanding_avg = (
-            df.groupby("card_masked")["amount"]
-            .expanding()
-            .mean()
-            .reset_index(0, drop=True)
-        )
-        df["temp_expanding_avg"] = expanding_avg
-        df["user_avg_tx_amount_historical"] = df.groupby("card_masked")[
-            "temp_expanding_avg"
-        ].shift(1)
-        df = df.drop(columns=["temp_expanding_avg"])
-        df["amount_to_historical_avg_ratio"] = df["amount"] / (
-            df["user_avg_tx_amount_historical"] + 1e-6
-        )
-        df["is_round_amount"] = (df["amount"] % 1 == 0).astype(int)
-        df["amount_cents"] = (df["amount"] * 100 % 100).astype(int)
-        cols_to_fill = [
-            "time_since_last_tx_seconds",
-            "user_tx_count_1h",
-            "user_tx_count_6h",
-            "user_tx_count_24h",
-            "user_unique_merchant_count_1h",
-            "user_unique_location_count_24h",
-            "user_avg_tx_amount_historical",
-            "amount_to_historical_avg_ratio",
-        ]
-        df[cols_to_fill] = df[cols_to_fill].fillna(-1)
-        df = df.drop(columns=["user_merchant_tx_count", "user_mcc_tx_count"])
-        return df
 
     def predict(self, recent_transactions: List[TransactionInput]) -> Dict:
         """
@@ -215,7 +129,7 @@ class FraudDetectionService:
         df["mcc_risk_score"] = df["mcc"].map(self.metadata["mcc_risk_map"]).fillna(3)
         df = self._apply_label_encoders(df)
 
-        processed_df = self._feature_engineering(df)
+        processed_df = feature_engineering(df)
 
         final_row = processed_df.iloc[-1:]
 
@@ -253,13 +167,91 @@ class FraudDetectionService:
         }
 
 
-# --- TEST BLOCK ---
+# # --- TEST BLOCK ---
+# if __name__ == "__main__":
+#     from datetime import datetime, timedelta
+#     import uuid
+
+#     # Initialize the service
+#     # This will load all models and artifacts into memory
+#     service = FraudDetectionService()
+
+#     if not service.is_ready:
+#         print("\nService failed to initialize. Exiting.")
+#     else:
+#         print("\n--- Running Test Scenario ---")
+
+#         # --- Create dummy data for a single user to test history ---
+#         card_user_1 = "520000XXXXXX1234"
+#         base_time = datetime.utcnow()
+
+#         # flip for merchant, either "Mercator" or "Clothing Stores"
+#         random_merchant = "Mercator" if np.random.rand() > 0.5 else "Clothing Stores"
+
+#         # Use merchants and channels the model has seen before
+#         dummy_transactions = [
+#             TransactionInput(
+#                 transaction_id=str(uuid.uuid4()),
+#                 timestamp=(base_time + timedelta(minutes=i * 200)).isoformat() + "Z",
+#                 amount=25.50 + i * 5,
+#                 merchant=random_merchant,
+#                 channel="pos",
+#                 location="SI",
+#                 city="Ljubljana",
+#                 card_issuer="Mastercard",
+#                 card_masked=card_user_1,
+#             )
+#             for i in range(8)
+#         ]
+#         # Make the last transaction look a bit suspicious
+#         dummy_transactions[-1].amount = 1250.75
+#         dummy_transactions[-1].merchant = "CryptoExchange"
+#         dummy_transactions[-1].channel = "online"
+#         dummy_transactions[-1].location = "EE"
+#         dummy_transactions[-1].city = "Tallinn"
+#         dummy_transactions[-1].timestamp = (
+#             base_time + timedelta(minutes=61)
+#         ).isoformat() + "Z"
+
+#         # Simulate a stream of transactions for this user
+#         print(f"\nSimulating transactions for user: {card_user_1}")
+#         for i in range(len(dummy_transactions)):
+#             # The input to the predict function is the current transaction + its history
+#             # In a real system, you'd fetch this history from a database or cache
+#             start_index = max(0, i - service.max_history_len)
+#             history_slice = dummy_transactions[start_index : i + 1]
+
+#             print(
+#                 f"\nPredicting for transaction {i + 1}/{len(dummy_transactions)} (ID: {history_slice[-1].transaction_id})"
+#             )
+#             print(f"  - Using {len(history_slice)} transactions as context.")
+
+#             result = service.predict(history_slice)
+#             print(f"  - Prediction Result: {result}")
+
+#         # --- Test a new user with no history ---
+#         print("\n--- Testing a new user with no history ---")
+#         card_user_2 = "410000XXXXXX5678"
+#         new_user_tx = [
+#             TransactionInput(
+#                 transaction_id=str(uuid.uuid4()),
+#                 timestamp=(base_time + timedelta(minutes=1)).isoformat() + "Z",
+#                 amount=15.00,
+#                 merchant="Petrol",
+#                 channel="pos",
+#                 location="SI",
+#                 city="Celje",
+#                 card_issuer="Visa",
+#                 card_masked=card_user_2,
+#             )
+#         ]
+#         result = service.predict(new_user_tx)
+#         print(f"Prediction Result for new user: {result}")
+
 if __name__ == "__main__":
     from datetime import datetime, timedelta
     import uuid
 
-    # Initialize the service
-    # This will load all models and artifacts into memory
     service = FraudDetectionService()
 
     if not service.is_ready:
@@ -271,60 +263,56 @@ if __name__ == "__main__":
         card_user_1 = "520000XXXXXX1234"
         base_time = datetime.utcnow()
 
-        # Use merchants and channels the model has seen before
         dummy_transactions = [
             TransactionInput(
                 transaction_id=str(uuid.uuid4()),
-                timestamp=(base_time + timedelta(minutes=i * 10)).isoformat() + "Z",
+                timestamp=(base_time + timedelta(minutes=i * 100)).isoformat() + "Z",
                 amount=25.50 + i * 5,
-                merchant="Mercator",
-                channel="pos",
-                location="SI",
-                city="Ljubljana",
-                card_issuer="Mastercard",
-                card_masked=card_user_1,
-            )
-            for i in range(6)
+                merchant="Mercator", channel="pos", location="SI", city="Ljubljana",
+                card_issuer="Mastercard", card_masked=card_user_1,
+            ) for i in range(7) # 7 normal transactions
         ]
-        # Make the last transaction look a bit suspicious
-        dummy_transactions[-1].amount = 1250.75
-        dummy_transactions[-1].merchant = "CryptoExchange"
-        dummy_transactions[-1].channel = "online"
-        dummy_transactions[-1].location = "EE"
-        dummy_transactions[-1].city = "Tallinn"
-        dummy_transactions[-1].timestamp = (
-            base_time + timedelta(minutes=61)
-        ).isoformat() + "Z"
+        # Make the last transaction look suspicious
+        dummy_transactions.append(
+            TransactionInput(
+                transaction_id=str(uuid.uuid4()),
+                timestamp=(base_time + timedelta(minutes=71)).isoformat() + "Z",
+                amount=1250.75,
+                merchant="CryptoExchange", channel="online", location="EE", city="Tallinn",
+                card_issuer="Mastercard", card_masked=card_user_1,
+            )
+        )
 
         # Simulate a stream of transactions for this user
         print(f"\nSimulating transactions for user: {card_user_1}")
-        for i in range(len(dummy_transactions)):
-            # The input to the predict function is the current transaction + its history
-            # In a real system, you'd fetch this history from a database or cache
-            start_index = max(0, i - service.max_history_len)
-            history_slice = dummy_transactions[start_index : i + 1]
+        
+        # THIS IS THE KEY CHANGE: We accumulate the history
+        transaction_history_for_user = []
+        for new_tx in dummy_transactions:
+            # Add the new transaction to the user's history
+            transaction_history_for_user.append(new_tx)
+            
+            # The context passed to predict is the FULL history up to this point
+            current_context = transaction_history_for_user
 
             print(
-                f"\nPredicting for transaction {i + 1}/{len(dummy_transactions)} (ID: {history_slice[-1].transaction_id})"
+                f"\nPredicting for transaction (ID: {current_context[-1].transaction_id})"
             )
-            print(f"  - Using {len(history_slice)} transactions as context.")
+            print(f"  - Using {len(current_context)} transactions as context.")
 
-            result = service.predict(history_slice)
+            result = service.predict(current_context)
             print(f"  - Prediction Result: {result}")
 
         # --- Test a new user with no history ---
+        # (This part remains the same and is correct)
         print("\n--- Testing a new user with no history ---")
         card_user_2 = "410000XXXXXX5678"
         new_user_tx = [
             TransactionInput(
                 transaction_id=str(uuid.uuid4()),
                 timestamp=(base_time + timedelta(minutes=1)).isoformat() + "Z",
-                amount=15.00,
-                merchant="Petrol",
-                channel="pos",
-                location="SI",
-                city="Celje",
-                card_issuer="Visa",
+                amount=15.00, merchant="Petrol", channel="pos",
+                location="SI", city="Celje", card_issuer="Visa",
                 card_masked=card_user_2,
             )
         ]

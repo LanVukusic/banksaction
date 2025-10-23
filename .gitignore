@@ -8,3 +8,6 @@ wheels/
 
 # Virtual environments
 .venv
+
+
+imbalanced_fraud_dataset.csv
