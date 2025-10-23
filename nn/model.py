@@ -147,7 +147,8 @@ class AdvancedGraphCNN(torch.nn.Module):
 
         self.classifier = torch.nn.Sequential(
             torch.nn.Dropout(0.6),
-            torch.nn.Linear(hidden_dim // 2, 1)
+            torch.nn.Linear(hidden_dim // 2, 1),
+            torch.nn.ReLU()
         )
 
     def forward(self, data):
