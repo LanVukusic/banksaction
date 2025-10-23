@@ -96,7 +96,6 @@ def append_to_transaction_graph(transaction):
 def get_transactions_embedding(inputs):
     global G
     sub_G = random_walk_subgraph(G, inputs)
-    print(len(sub_G))
     d = networkx_to_pyg(
         sub_G,
         node_feature_config=node_feature_config,
@@ -106,7 +105,6 @@ def get_transactions_embedding(inputs):
         node_dims={"type": 2},
         node_total_dim=2,
     )
-    print(d)
     return model.forward_embedding(d)
 
 

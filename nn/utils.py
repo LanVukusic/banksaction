@@ -1,5 +1,5 @@
 import torch
-from torch_geometric.data import Data, Dataset
+from torch_geometric.data import Data
 import networkx as nx
 import pandas as pd
 import numpy as np
