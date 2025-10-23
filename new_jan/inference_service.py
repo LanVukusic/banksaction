@@ -173,88 +173,6 @@ class FraudDetectionService:
         }
 
 
-# # --- TEST BLOCK ---
-# if __name__ == "__main__":
-#     from datetime import datetime, timedelta
-#     import uuid
-
-#     # Initialize the service
-#     # This will load all models and artifacts into memory
-#     service = FraudDetectionService()
-
-#     if not service.is_ready:
-#         print("\nService failed to initialize. Exiting.")
-#     else:
-#         print("\n--- Running Test Scenario ---")
-
-#         # --- Create dummy data for a single user to test history ---
-#         card_user_1 = "520000XXXXXX1234"
-#         base_time = datetime.utcnow()
-
-#         # flip for merchant, either "Mercator" or "Clothing Stores"
-#         random_merchant = "Mercator" if np.random.rand() > 0.5 else "Clothing Stores"
-
-#         # Use merchants and channels the model has seen before
-#         dummy_transactions = [
-#             TransactionInput(
-#                 transaction_id=str(uuid.uuid4()),
-#                 timestamp=(base_time + timedelta(minutes=i * 200)).isoformat() + "Z",
-#                 amount=25.50 + i * 5,
-#                 merchant=random_merchant,
-#                 channel="pos",
-#                 location="SI",
-#                 city="Ljubljana",
-#                 card_issuer="Mastercard",
-#                 card_masked=card_user_1,
-#             )
-#             for i in range(8)
-#         ]
-#         # Make the last transaction look a bit suspicious
-#         dummy_transactions[-1].amount = 1250.75
-#         dummy_transactions[-1].merchant = "CryptoExchange"
-#         dummy_transactions[-1].channel = "online"
-#         dummy_transactions[-1].location = "EE"
-#         dummy_transactions[-1].city = "Tallinn"
-#         dummy_transactions[-1].timestamp = (
-#             base_time + timedelta(minutes=61)
-#         ).isoformat() + "Z"
-
-#         # Simulate a stream of transactions for this user
-#         print(f"\nSimulating transactions for user: {card_user_1}")
-#         for i in range(len(dummy_transactions)):
-#             # The input to the predict function is the current transaction + its history
-#             # In a real system, you'd fetch this history from a database or cache
-#             start_index = max(0, i - service.max_history_len)
-#             history_slice = dummy_transactions[start_index : i + 1]
-
-#             print(
-#                 f"\nPredicting for transaction {i + 1}/{len(dummy_transactions)} (ID: {history_slice[-1].transaction_id})"
-#             )
-#             print(f"  - Using {len(history_slice)} transactions as context.")
-
-#             result = service.predict(history_slice)
-#             print(f"  - Prediction Result: {result}")
-
-#         # --- Test a new user with no history ---
-#         print("\n--- Testing a new user with no history ---")
-#         card_user_2 = "410000XXXXXX5678"
-#         new_user_tx = [
-#             TransactionInput(
-#                 transaction_id=str(uuid.uuid4()),
-#                 timestamp=(base_time + timedelta(minutes=1)).isoformat() + "Z",
-#                 amount=15.00,
-#                 merchant="Petrol",
-#                 channel="pos",
-#                 location="SI",
-#                 city="Celje",
-#                 card_issuer="Visa",
-#                 card_masked=card_user_2,
-#             )
-#         ]
-#         result = service.predict(new_user_tx)
-#         print(f"Prediction Result for new user: {result}")
-
-
 db_conn = None  # Global database connection
 
 
@@ -296,7 +214,7 @@ def store_fraud_prediction(transaction_id, fraud_probability):
         query = """
         INSERT INTO fraud_predictions 
         (transaction_id, fraud_probability, prediction_timestamp, source_model) 
-        VALUES (%s, %s, NOW(), "aed-lgb")
+        VALUES (%s, %s, NOW(), "LGBM_transformer")
         """
         cursor.execute(query, (transaction_id, fraud_probability))
 
@@ -308,6 +226,32 @@ def store_fraud_prediction(transaction_id, fraud_probability):
     except (Exception, psycopg2.DatabaseError) as error:
         print(f"Error storing fraud prediction: {error}")
         db_conn.rollback()
+
+
+def store_embedding(embedding, name, transaction_reference):
+    """Stores an embedding in the database using the global connection."""
+    global db_conn
+    if db_conn is None:
+        print("Database connection not initialized.")
+        return
+
+    try:
+        cursor = db_conn.cursor()
+
+        # Convert tensor to list for storage
+        embedding_list = embedding.detach().numpy().tolist()
+
+        query = (
+            "INSERT INTO embeddings (embedding, name, transaction) VALUES (%s, %s, %s)"
+        )
+        cursor.execute(query, (embedding_list, name, transaction_reference))
+
+        db_conn.commit()
+        print(f"Stored embedding for '{name}'.")
+        cursor.close()
+    except (Exception, psycopg2.DatabaseError) as error:
+        print(error)
+        db_conn.rollback()  # Rollback in case of error
 
 
 async def run():
@@ -336,7 +280,7 @@ async def run():
         user = data["card_masked"]  # Fixed: access dictionary key
         print(f"received data for {user}")
 
-        history = get_user_history_df(15, user)
+        history = get_user_history_df(40, user)
 
         # If history_df is a DataFrame, convert it to TransactionInput objects
         history_transactions = []
@@ -381,6 +325,14 @@ async def run():
         store_fraud_prediction(
             new_transaction.transaction_id, result["fraud_probability"]
         )
+
+        embedding = result["embedding"]
+        store_embedding(
+            embedding=embedding,
+            name="Transaction embedding",
+            transaction_reference=new_transaction.transaction_id,
+        )
+
         print("\n\n")
 
     # Subscribe to the 'transactions' topic

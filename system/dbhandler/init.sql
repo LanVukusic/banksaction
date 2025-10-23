@@ -1,25 +1,36 @@
 CREATE TABLE transactions (
-    TRANSACTION_ID INT PRIMARY KEY,
-    TX_DATETIME TIMESTAMPTZ,
-    CUSTOMER_ID INT,
-    TERMINAL_ID INT,
-    TX_AMOUNT FLOAT,
-    MERCHANT_ID INT,
-    IS_ONLINE BOOLEAN,
+    transaction_id UUID PRIMARY KEY,
+    timestamp TIMESTAMPTZ,
+    amount FLOAT,
+    currency VARCHAR(10),
+    location VARCHAR(10),
+    city VARCHAR(255),
+    merchant VARCHAR(255),
+    channel VARCHAR(50),
+    card_masked VARCHAR(20),
+    card_issuer VARCHAR(50),
     TX_FRAUD BOOLEAN,
-    TX_FRAUD_SCENARIO VARCHAR(255),
-    CUSTOMER_IS_COMPROMISED BOOLEAN,
-    MERCHANT_IS_COMPROMISED BOOLEAN,
-    TERMINAL_IS_COMPROMISED BOOLEAN,
-    TERMINAL_X FLOAT,
-    TERMINAL_Y FLOAT
+    FRAUD_SCENARIO VARCHAR(255),
+    fraud_probability FLOAT
 );
 
 CREATE EXTENSION IF NOT EXISTS vector;
 
 CREATE TABLE embeddings (
     id SERIAL PRIMARY KEY,
-    embedding VECTOR(64),
+    embedding VECTOR(128),
     name TEXT,
-    transaction_references INT[]
+    transaction UUID
 );
+
+-- Optional: Create a table for fraud detection results if you want to store them separately
+CREATE TABLE fraud_predictions (
+    id SERIAL PRIMARY KEY,
+    transaction_id UUID REFERENCES transactions(transaction_id),
+    fraud_probability FLOAT,
+    source_model VARCHAR(20),
+    prediction_timestamp TIMESTAMPTZ DEFAULT NOW()
+);
+
+
+

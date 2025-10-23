@@ -1,10 +1,12 @@
 import asyncio
 import pandas as pd
 import json
-import time
 from nats.aio.client import Client as NATS
 
-DELAY = 0.2
+# transaction_id,timestamp,amount,currency,location,city,merchant,channel,card_masked,card_issuer,TX_FRAUD,FRAUD_SCENARIO
+
+DELAY = 0.1
+PATH = "../data/imbalanced_fraud_dataset.csv"
 
 
 async def run():
@@ -15,10 +17,10 @@ async def run():
 
     # Load the transaction data
     try:
-        df = pd.read_parquet("../data/transactions.parquet")
+        df = pd.read_csv(PATH)
         print(f"Loaded {len(df)} transactions from 'data/transactions.parquet'")
     except FileNotFoundError:
-        print("Error: '../data/transactions.parquet' not found.")
+        print("Error:not found." + PATH)
         await nc.close()
         return
 
@@ -33,7 +35,7 @@ async def run():
             # Publish the transaction to the 'transactions' topic
             await nc.publish("transactions", json.dumps(transaction).encode())
             print(
-                f"Published transaction ID: {transaction.get('TRANSACTION_ID', 'N/A')}"
+                f"Published transaction ID: {transaction.get('transaction_id', 'N/A')}"
             )
 
             # Wait for a short period to simulate a real-time stream
@@ -55,46 +57,74 @@ def clean_transaction_data(transaction):
 
     for key, value in transaction.items():
         # Handle NaN/None values
-        if pd.isna(value):
-            cleaned[key] = None
-        # Handle timestamps
-        elif key == "TX_DATETIME" and isinstance(value, pd.Timestamp):
-            cleaned[key] = value.isoformat()
-        # Handle numeric fields that should be integers but might be floats
-        elif key in [
-            "TRANSACTION_ID",
-            "CUSTOMER_ID",
-            "TERMINAL_ID",
-            "MERCHANT_ID",
-        ] and isinstance(value, (int, float)):
-            # Convert to int if it's a whole number, otherwise keep as float
-            if value == int(value):
-                cleaned[key] = int(value)
+        if pd.isna(value) or value in [None, "None", "null", ""]:
+            # Set appropriate defaults based on field type
+            if key in ["TX_FRAUD", "FRAUD_SCENARIO"]:
+                cleaned[key] = 0
+            elif key in ["amount"]:
+                cleaned[key] = 0.0
+            elif key in [
+                "currency",
+                "location",
+                "city",
+                "merchant",
+                "channel",
+                "card_masked",
+                "card_issuer",
+            ]:
+                cleaned[key] = None
             else:
+                cleaned[key] = None
+
+        # Handle timestamps
+        elif key == "timestamp" and isinstance(value, (pd.Timestamp, str)):
+            if isinstance(value, pd.Timestamp):
+                cleaned[key] = value.isoformat()
+            elif isinstance(value, str):
+                # If it's already a string, keep it as is (assuming proper format)
                 cleaned[key] = value
-        # Handle TX_FRAUD and TX_FRAUD_SCENARIO - keep as integers (0/1)
-        elif key in ["TX_FRAUD", "TX_FRAUD_SCENARIO"]:
-            if pd.isna(value):
-                cleaned[key] = 0  # Default to 0 if NaN
-            elif isinstance(value, (int, float)):
+
+        # Handle transaction_id (UUID field)
+        elif key == "transaction_id" and isinstance(value, str):
+            cleaned[key] = value  # Keep UUID as string
+
+        # Handle amount (numeric field)
+        elif key == "amount":
+            try:
+                cleaned[key] = float(value)
+            except (ValueError, TypeError):
+                cleaned[key] = 0.0
+
+        # Handle currency, location, city, merchant, channel, card_masked, card_issuer (string fields)
+        elif key in [
+            "currency",
+            "location",
+            "city",
+            "merchant",
+            "channel",
+            "card_masked",
+            "card_issuer",
+        ]:
+            cleaned[key] = str(value) if value is not None else None
+
+        # Handle fraud flags - convert to integers (0/1)
+        elif key in ["TX_FRAUD", "FRAUD_SCENARIO"]:
+            if isinstance(value, (int, float)):
                 cleaned[key] = int(value)
             elif isinstance(value, bool):
                 cleaned[key] = 1 if value else 0
+            elif isinstance(value, str) and value.lower() in ["true", "1", "yes"]:
+                cleaned[key] = 1
+            elif isinstance(value, str) and value.lower() in [
+                "false",
+                "0",
+                "no",
+                "none",
+            ]:
+                cleaned[key] = 0
             else:
                 cleaned[key] = 0  # Default to 0 for unexpected types
-        # Handle boolean fields
-        elif key in [
-            "IS_ONLINE",
-            "CUSTOMER_IS_COMPROMISED",
-            "MERCHANT_IS_COMPROMISED",
-            "TERMINAL_IS_COMPROMISED",
-        ]:
-            if pd.isna(value):
-                cleaned[key] = False
-            elif isinstance(value, (int, float)):
-                cleaned[key] = bool(value)
-            else:
-                cleaned[key] = value
+
         # For all other fields, keep as is
         else:
             cleaned[key] = value
