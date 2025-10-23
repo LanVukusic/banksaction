@@ -84,7 +84,7 @@ def networkx_to_pyg(
         edge_features.append(feature_parts)
 
         # Get fraud label (this is separate from features)
-        edge_labels.append(float(data.get("is_fraud", 0.0)))
+        edge_labels.append(float(data.get("TX_FRAUD")))
 
     # Handle case with nodes but no edges
     if not edge_indices:
