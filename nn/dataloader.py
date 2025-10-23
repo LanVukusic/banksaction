@@ -41,7 +41,7 @@ class SubgraphDataset(Dataset):
         fraud_nodes_set = set()
 
         for u, v, key, data in G.edges(keys=True, data=True):
-            if data.get("is_fraud") == 1:
+            if data.get("TX_FRAUD") == 1:
                 self.fraud_edges.append((u, v, key))
                 fraud_nodes_set.add(u)
                 fraud_nodes_set.add(v)
@@ -112,7 +112,7 @@ class SubgraphDataset(Dataset):
         Samples a subgraph starting from 2-4 known fraudulent transactions.
         """
         if not self.fraud_edges:
-            return self._sample_non_fraudulent_subgraph()
+            raise Exception
 
         num_fraud_jumps = np.random.randint(2, 5)
         num_to_sample = min(num_fraud_jumps, len(self.fraud_edges))
