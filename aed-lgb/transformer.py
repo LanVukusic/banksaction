@@ -23,26 +23,26 @@ from feature import feature_engineering
 from data_generator import generate_fraud_dataset, MERCHANTS
 
 # --- Environment and Constants ---
-os.environ["OMP_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
+# os.environ["OMP_NUM_THREADS"] = "1"
+# os.environ["MKL_NUM_THREADS"] = "1"
+# os.environ["OPENBLAS_NUM_THREADS"] = "1"
 
 DATASET_FILE = "imbalanced_fraud_dataset.csv"
 TEST_SIZE = 0.2
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-DEVICE = "mps"
+#  DEVICE = "mps"
 MODEL_DIR = "saved_models_transformer"
 os.makedirs(MODEL_DIR, exist_ok=True)
 
 SEQUENCE_LENGTH = 5
-AE_EPOCHS = 20
-AE_BATCH_SIZE = 128
-AE_LEARNING_RATE = 1e-4
+AE_EPOCHS = 40
+AE_BATCH_SIZE = 2048
+AE_LEARNING_RATE = 2e-4
 
-D_MODEL = 128
+D_MODEL = 164
 N_HEAD = 4
 DIM_FEEDFORWARD = 128
-NUM_LAYERS = 3
+NUM_LAYERS = 4
 
 
 # --- Data Preparation for Sequences ---
@@ -135,7 +135,6 @@ class TransactionTransformerAE(nn.Module):
         return reconstructed_sequence, latent_vector
 
     def encode(self, src):
-        # Helper function for inference to only get the latent vector
         with torch.no_grad():
             batch_size = src.shape[0]
             embedded_src = self.input_embedding(src)
@@ -153,7 +152,7 @@ if __name__ == "__main__":
     if not os.path.exists(DATASET_FILE):
         print("Dataset not found. Generating...")
         generate_fraud_dataset(
-            output_file=DATASET_FILE, n_legit=2000000, n_fraud_events=8000
+            output_file=DATASET_FILE, n_legit=6000000, n_fraud_events=20000
         )
 
     # 1. Load and Preprocess Data
@@ -247,7 +246,7 @@ if __name__ == "__main__":
     # 8. Train Transformer Autoencoder
     train_dataset = TensorDataset(torch.tensor(X_train_legit_seq, dtype=torch.float32))
     train_loader = DataLoader(
-        train_dataset, batch_size=AE_BATCH_SIZE, shuffle=True, num_workers=0
+        train_dataset, batch_size=AE_BATCH_SIZE, shuffle=True, num_workers=3
     )
 
     n_features = X_train_legit_seq.shape[2]
@@ -288,22 +287,40 @@ if __name__ == "__main__":
         print(f"Epoch [{epoch + 1}/{AE_EPOCHS}], Average Loss: {avg_loss:.6f}")
         scheduler.step(avg_loss)
 
-    # ... The rest of the script for LGBM and exporting remains the same ...
-    # (Leaving it here for completeness)
-    print("\n--- Generating Latent Vectors for LightGBM ---")
-    autoencoder.eval()
-    train_latent_vectors = (
-        autoencoder.encode(torch.tensor(X_train_seq, dtype=torch.float32).to(DEVICE))
-        .cpu()
-        .numpy()
+    INFERENCE_BATCH_SIZE = 1024 
+
+    def get_latent_vectors_in_batches(model, data, batch_size, device):
+        """Helper function to run inference in batches."""
+        model.eval()
+        all_latents = []
+        with torch.no_grad():
+            for i in tqdm(range(0, len(data), batch_size), desc="Encoding Batches"):
+                batch_data = data[i : i + batch_size]
+                batch_tensor = torch.tensor(batch_data, dtype=torch.float32).to(device)
+                
+                # We need to handle the forward pass differently for encode
+                # The encode method in your class needs a slight modification
+                latent_vector = model.encode(batch_tensor)
+                
+                all_latents.append(latent_vector.cpu().numpy())
+        
+        return np.concatenate(all_latents, axis=0)
+
+    # We need to update the .encode() method slightly in the model class
+    # to handle the final_norm correctly. Go back to the TransactionTransformerAE class and modify the encode method.
+
+    # After modifying the encode method, run the batch processing
+    train_latent_vectors = get_latent_vectors_in_batches(
+        autoencoder, X_train_seq, INFERENCE_BATCH_SIZE, DEVICE
     )
-    test_latent_vectors = (
-        autoencoder.encode(torch.tensor(X_test_seq, dtype=torch.float32).to(DEVICE))
-        .cpu()
-        .numpy()
+    test_latent_vectors = get_latent_vectors_in_batches(
+        autoencoder, X_test_seq, INFERENCE_BATCH_SIZE, DEVICE
     )
-    X_train_final, X_test_final = train_latent_vectors, test_latent_vectors
-    y_train_final, y_test_final = y_train_seq, y_test_seq
+
+    X_train_final = train_latent_vectors
+    X_test_final = test_latent_vectors
+    y_train_final = y_train_seq
+    y_test_final = y_test_seq
 
     print("\n--- Starting LightGBM Training ---")
     scale_pos_weight = (
@@ -343,7 +360,7 @@ if __name__ == "__main__":
     )
 
     print("\n--- Exporting models and artifacts ---")
-    torch.save(autoencoder.state_dict(), os.path.join(MODEL_DR, "transformer_ae.pth"))
+    torch.save(autoencoder.state_dict(), os.path.join(MODEL_DIR, "transformer_ae.pth"))
     lgb_model.booster_.save_model(os.path.join(MODEL_DIR, "lightgbm_model.txt"))
     joblib.dump(scaler, os.path.join(MODEL_DIR, "scaler.joblib"))
     joblib.dump(encoders, os.path.join(MODEL_DIR, "label_encoders.joblib"))
