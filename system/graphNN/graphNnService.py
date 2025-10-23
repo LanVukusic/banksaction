@@ -77,9 +77,9 @@ def append_to_transaction_graph(transaction):
 
     # Add nodes if they don't exist
     if not G.has_node(customer_id):
-        G.add_node(customer_id, type="customer")
+        G.add_node(customer_id, type="customer", type_onehot=[1, 0])
     if not G.has_node(merchant_id):
-        G.add_node(merchant_id, type="merchant")
+        G.add_node(merchant_id, type="merchant", type_onehot=[0, 1])
 
     # Add edge
     G.add_edge(
@@ -88,15 +88,17 @@ def append_to_transaction_graph(transaction):
         key=df["TRANSACTION_ID"].iloc[0],
         amount=df["TX_AMOUNT"].iloc[0],
         fraud=df["TX_FRAUD"].iloc[0],
+        weight=float(df["TX_AMOUNT"].iloc[0]),
     )
     print(f"Appended transaction {df['TRANSACTION_ID'].iloc[0]} to the graph.")
 
 
 def get_transactions_embedding(inputs):
     global G
-    G = random_walk_subgraph(G, inputs)
+    sub_G = random_walk_subgraph(G, inputs)
+    print(len(sub_G))
     d = networkx_to_pyg(
-        G,
+        sub_G,
         node_feature_config=node_feature_config,
         edge_feature_config=edge_feature_config,
         edge_dims={"amount": 1},
@@ -104,6 +106,7 @@ def get_transactions_embedding(inputs):
         node_dims={"type": 2},
         node_total_dim=2,
     )
+    print(d)
     return model.forward_embedding(d)
 
 
@@ -158,7 +161,7 @@ async def run():
         print(f"Received a message on '{subject}'")
 
         # when transaction is received, add it to the graph
-        append_to_transaction_graph(data)
+        # append_to_transaction_graph(data)
 
         # Calculate and store the embedding for the customer
         customer_id = data.get("CUSTOMER_ID")
