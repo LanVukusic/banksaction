@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"dbhandler/server"
 	"encoding/json"
 	"log"
 	"os"
@@ -15,20 +16,6 @@ import (
 )
 
 // Transaction represents the cleaned transaction data for the new schema
-type Transaction struct {
-	TransactionID string  `json:"transaction_id"`
-	Timestamp     string  `json:"timestamp"` // ISO format string
-	Amount        float64 `json:"amount"`
-	Currency      *string `json:"currency"` // Pointer for null
-	Location      *string `json:"location"` // Pointer for null
-	City          *string `json:"city"`     // Pointer for null
-	Merchant      *string `json:"merchant"` // Pointer for null
-	Channel       *string `json:"channel"`  // Pointer for null
-	CardMasked    *string `json:"card_masked"`
-	CardIssuer    *string `json:"card_issuer"`
-	TxFraud       int     `json:"TX_FRAUD"`
-	FraudScenario int     `json:"FRAUD_SCENARIO"`
-}
 
 // parseTime parses ISO 8601 format string to time.Time
 func parseTime(timeStr string) (time.Time, error) {
@@ -135,7 +122,7 @@ func main() {
 
 	// Subscribe to the 'transactions' topic
 	sub, err := nc.Subscribe("transactions", func(msg *nats.Msg) {
-		var t Transaction
+		var t server.Transaction
 		err := json.Unmarshal(msg.Data, &t)
 		if err != nil {
 			log.Println("Error unmarshalling transaction:", err)
@@ -188,6 +175,8 @@ func main() {
 	defer sub.Unsubscribe()
 
 	log.Println("Subscribed to 'transactions' topic.")
+
+	server.StartHTTPServer(db)
 
 	// Wait for a signal to exit
 	sigChan := make(chan os.Signal, 1)

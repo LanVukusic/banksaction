@@ -172,6 +172,44 @@ class FraudDetectionService:
             "threshold": self.metadata["best_threshold"],
         }
 
+    def get_latent_vectors(
+        self, recent_transactions: List[TransactionInput]
+    ) -> List[np.ndarray]:
+        """
+        Generates latent vectors for a list of transactions using the autoencoder.
+
+        Args:
+            recent_transactions (List[TransactionInput]): A list of transactions for which
+                to generate latent vectors.
+
+        Returns:
+            List[np.ndarray]: A list of latent vectors, one for each transaction.
+        """
+        if not self.is_ready:
+            raise RuntimeError("Service is not ready.")
+
+        if not recent_transactions:
+            return []
+
+        df = pd.DataFrame([asdict(tx) for tx in recent_transactions])
+
+        df["mcc"] = df["merchant"].map(self.metadata["merchant_to_mcc"])
+        df["mcc_risk_score"] = df["mcc"].map(self.metadata["mcc_risk_map"]).fillna(3)
+        df = self._apply_label_encoders(df)
+
+        processed_df = feature_engineering(df)
+
+        initial_features = processed_df[self.metadata["initial_features"]]
+        scaled_features = self.scaler.transform(initial_features)
+
+        with torch.no_grad():
+            latent_tensor = self.autoencoder.encode(
+                torch.tensor(scaled_features, dtype=torch.float32).to(DEVICE)
+            )
+            latent_vectors = latent_tensor.cpu().numpy()
+
+        return [vec for vec in latent_vectors]
+
 
 # # --- TEST BLOCK ---
 # if __name__ == "__main__":
@@ -310,6 +348,32 @@ def store_fraud_prediction(transaction_id, fraud_probability):
         db_conn.rollback()
 
 
+def store_embedding(embedding, name, transaction_reference):
+    """Stores an embedding in the database using the global connection."""
+    global db_conn
+    if db_conn is None:
+        print("Database connection not initialized.")
+        return
+
+    try:
+        cursor = db_conn.cursor()
+
+        # Convert tensor to list for storage
+        embedding_list = embedding.detach().numpy().tolist()
+
+        query = (
+            "INSERT INTO embeddings (embedding, name, transaction) VALUES (%s, %s, %s)"
+        )
+        cursor.execute(query, (embedding_list, name, transaction_reference))
+
+        db_conn.commit()
+        print(f"Stored embedding for '{name}'.")
+        cursor.close()
+    except (Exception, psycopg2.DatabaseError) as error:
+        print(error)
+        db_conn.rollback()  # Rollback in case of error
+
+
 async def run():
     global db_conn
 
@@ -382,6 +446,13 @@ async def run():
             new_transaction.transaction_id, result["fraud_probability"]
         )
         print("\n\n")
+
+        embeddings = service.get_latent_vectors
+        store_embedding(
+            embedding=embeddings,
+            name="embedding",
+            transaction_reference=new_transaction.transaction_id,
+        )
 
     # Subscribe to the 'transactions' topic
     await nc.subscribe("transactions", cb=message_handler)
