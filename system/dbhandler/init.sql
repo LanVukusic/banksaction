@@ -23,7 +23,15 @@ CREATE TABLE embeddings (
     transaction UUID
 );
 
--- Optional: Create a table for fraud detection results if you want to store them separately
+CREATE TABLE known_frauds (
+    id SERIAL PRIMARY KEY,
+    embedding_id INT REFERENCES embeddings(id) ON DELETE CASCADE,
+    fraud_name TEXT NOT NULL,
+    description TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+
 CREATE TABLE fraud_predictions (
     id SERIAL PRIMARY KEY,
     transaction_id UUID REFERENCES transactions(transaction_id),
@@ -34,3 +42,36 @@ CREATE TABLE fraud_predictions (
 
 
 
+
+CREATE OR REPLACE VIEW transaction_fraud_predictions AS
+SELECT
+    t.transaction_id,
+    t.timestamp,
+    t.amount,
+    t.currency,
+    t.city,
+    t.merchant,
+    t.channel,
+    t.card_masked,
+    t.card_issuer,
+    fp.fraud_probability,
+    fp.source_model,
+    fp.prediction_timestamp
+FROM transactions t
+LEFT JOIN fraud_predictions fp
+    ON t.transaction_id = fp.transaction_id;
+
+CREATE OR REPLACE VIEW transaction_fraud_similarity AS
+SELECT
+    t.transaction_id,
+    t.amount,
+    t.city,
+    t.merchant,
+    kf.fraud_name,
+    kf.description,
+    e.embedding <#> fe.embedding AS distance -- cosine distance
+FROM transactions t
+JOIN embeddings e ON e.transaction = t.transaction_id
+JOIN known_frauds kf ON kf.embedding_id IS NOT NULL
+JOIN embeddings fe ON fe.id = kf.embedding_id
+ORDER BY distance ASC;
